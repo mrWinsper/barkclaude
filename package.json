@@ -12,6 +12,22 @@
   "keywords": ["claude", "claude-code", "shiba", "doge", "productivity", "fun"],
   "author": "Egor Kuptsov",
   "license": "MIT",
+  "files": [
+    "main.js",
+    "overlay.html",
+    "preload.js",
+    "bin/",
+    "assets/",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrWinsper/barkclaude.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mrWinsper/barkclaude/issues"
+  },
+  "homepage": "https://github.com/mrWinsper/barkclaude#readme",
   "dependencies": {
     "electron": "^35.0.0"
   }
