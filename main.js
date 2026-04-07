@@ -23,24 +23,46 @@ function getRandomMessage() {
 }
 
 function sendToClaude(message) {
-  // Send Ctrl+C interrupt then a motivational message to Claude Code
-  const escaped = message.replace(/"/g, '\\"').replace(/!/g, '\\!');
-  
-  // Try to find Claude Code terminal and send interrupt + message
-  // Method 1: Use claude CLI directly
-  exec(`claude --message "${escaped}" --no-input 2>/dev/null || true`);
-  
-  // Method 2: Send to most recent terminal via osascript (macOS)
+  const text = `🐕 ${message}`;
+
+  if (process.platform === 'win32') {
+    // Put text on clipboard, focus a likely terminal window, paste + Enter.
+    // Uses PowerShell -EncodedCommand so we don't have to escape anything.
+    const ps = `
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+[System.Windows.Forms.Clipboard]::SetText([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${Buffer.from(text, 'utf8').toString('base64')}')))
+$wshell = New-Object -ComObject wscript.shell
+$titles = @('Claude Code','Windows Terminal','PowerShell','Command Prompt','cmd','Terminal','WezTerm','Alacritty','Cursor','VSCode','Visual Studio Code')
+$activated = $false
+foreach ($t in $titles) { if ($wshell.AppActivate($t)) { $activated = $true; break } }
+if (-not $activated) { exit 0 }
+Start-Sleep -Milliseconds 200
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 80
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+`;
+    const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+    exec(`powershell -NoProfile -EncodedCommand ${encoded}`);
+    return;
+  }
+
   if (process.platform === 'darwin') {
+    const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const osa = `
-      tell application "Terminal"
-        if (count of windows) > 0 then
-          do script "echo '🐕 ${escaped}'" in front window
-        end if
+      tell application "System Events"
+        set the clipboard to "${escaped}"
+        keystroke "v" using command down
+        delay 0.1
+        keystroke return
       end tell
     `;
     exec(`osascript -e '${osa}' 2>/dev/null || true`);
+    return;
   }
+
+  // Linux: try xdotool
+  const escaped = text.replace(/'/g, `'\\''`);
+  exec(`xdotool type --delay 0 -- '${escaped}' && xdotool key Return 2>/dev/null || true`);
 }
 
 function createOverlay() {

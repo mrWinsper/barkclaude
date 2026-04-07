@@ -1,6 +1,6 @@
 {
   "name": "barkclaude",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An animated Shiba Inu that barks at Claude Code to make it work faster 🐕",
   "main": "main.js",
   "bin": {
