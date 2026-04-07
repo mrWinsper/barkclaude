@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, screen } = require('electron');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 
 let overlay = null;
 let tray = null;
@@ -23,74 +23,42 @@ function getRandomMessage() {
 }
 
 function sendToClaude(message) {
-  const text = `🐕 ${message}`;
+  // No emoji prefix — conhost with non-UTF8 codepage mangles multi-byte chars on paste.
+  const text = message;
 
   if (process.platform === 'win32') {
-    // Find the terminal window that owns a running `claude` CLI process,
-    // activate it by PID, then paste + Enter. No title matching, no shotgun.
+    // Type the text character-by-character via SendKeys (no clipboard, no Ctrl+V).
+    // Claude Code's TUI in raw mode doesn't handle Ctrl+V as paste — it just sees
+    // a literal 'v'. Synthetic keystrokes, on the other hand, are delivered as
+    // normal char input through conhost's stdin and land in the TUI input field.
+    // SendKeys special metachars +^%~(){}[] must be wrapped in {} to be literal.
     const textB64 = Buffer.from(text, 'utf8').toString('base64');
     const ps = `
-$ErrorActionPreference = 'SilentlyContinue'
 $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${textB64}'))
-
-$all = Get-CimInstance Win32_Process
-# Processes whose command line contains the claude CLI as a word
-# (\\bclaude\\b avoids matching "barkclaude")
-$claudePids = @($all | Where-Object {
-  $_.CommandLine -and $_.CommandLine -match '\\bclaude\\b'
-} | Select-Object -ExpandProperty ProcessId)
-
-if ($claudePids.Count -eq 0) { exit 0 }
-
-# Build map for fast parent lookup
-$byPid = @{}
-foreach ($p in $all) { $byPid[[int]$p.ProcessId] = $p }
-
-# Walk up the parent chain from each claude pid; collect ancestor PIDs
-$ancestors = @{}
-foreach ($cp in $claudePids) {
-  $cur = [int]$cp
-  while ($cur -and -not $ancestors.ContainsKey($cur)) {
-    $ancestors[$cur] = $true
-    $p = $byPid[$cur]
-    if (-not $p) { break }
-    $cur = [int]$p.ParentProcessId
-  }
-}
-
-# Find the first ancestor that owns a visible top-level window
-$target = Get-Process | Where-Object {
-  $_.MainWindowHandle -ne [IntPtr]::Zero -and $ancestors.ContainsKey([int]$_.Id)
-} | Select-Object -First 1
-
-if (-not $target) { exit 0 }
-
-$wshell = New-Object -ComObject wscript.shell
-$null = $wshell.AppActivate([int]$target.Id)
-Start-Sleep -Milliseconds 200
-
+$escaped = $text -replace '([+^%~(){}\\[\\]])', '{$1}'
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
-[System.Windows.Forms.Clipboard]::SetText($text)
-[System.Windows.Forms.SendKeys]::SendWait('^v')
 Start-Sleep -Milliseconds 80
+[System.Windows.Forms.SendKeys]::SendWait($escaped)
+Start-Sleep -Milliseconds 120
 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
 `;
     const encoded = Buffer.from(ps, 'utf16le').toString('base64');
-    exec(`powershell -NoProfile -EncodedCommand ${encoded}`);
+    exec(`powershell -NoProfile -WindowStyle Hidden -EncodedCommand ${encoded}`, { windowsHide: true });
     return;
   }
 
   if (process.platform === 'darwin') {
+    // Type the text directly via System Events (same rationale as Windows:
+    // Cmd+V into a TUI is unreliable; typing chars into the focused terminal is).
     const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const osa = `
-      tell application "System Events"
-        set the clipboard to "${escaped}"
-        keystroke "v" using command down
-        delay 0.1
-        keystroke return
-      end tell
-    `;
-    exec(`osascript -e '${osa}' 2>/dev/null || true`);
+    const script = `tell application "System Events"
+  keystroke "${escaped}"
+  delay 0.1
+  key code 36
+end tell`;
+    execFile('osascript', ['-e', script], (err) => {
+      if (err) console.warn('osascript failed:', err.message);
+    });
     return;
   }
 
@@ -113,6 +81,7 @@ function createOverlay() {
     skipTaskbar: true,
     resizable: false,
     hasShadow: false,
+    focusable: false, // critical: don't steal focus from the user's terminal
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -146,8 +115,30 @@ app.whenReady().then(() => {
 
   ipcMain.on('bark', (_event, customMsg) => {
     const message = customMsg || getRandomMessage();
-    console.log(`🐕 ${message}`);
     sendToClaude(message);
+  });
+
+  // Drag: renderer tells us "drag started", we poll the cursor and reposition
+  // the window until the renderer tells us "drag ended". This works with
+  // pointer capture in the renderer so we keep tracking even if the cursor
+  // momentarily leaves the window while it catches up.
+  let dragOffset = null;
+  let dragTimer = null;
+  ipcMain.on('drag-start', () => {
+    if (!overlay) return;
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = overlay.getBounds();
+    dragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+    if (dragTimer) clearInterval(dragTimer);
+    dragTimer = setInterval(() => {
+      if (!dragOffset || !overlay) return;
+      const c = screen.getCursorScreenPoint();
+      overlay.setPosition(c.x - dragOffset.x, c.y - dragOffset.y);
+    }, 16);
+  });
+  ipcMain.on('drag-end', () => {
+    dragOffset = null;
+    if (dragTimer) { clearInterval(dragTimer); dragTimer = null; }
   });
 
   ipcMain.on('quit', () => app.quit());

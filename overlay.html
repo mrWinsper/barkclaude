@@ -222,7 +222,33 @@ function doBark() {
   window.shiba.bark(msg);
 }
 
-document.getElementById('shibaWrap').addEventListener('click', doBark);
+// Click-vs-drag: pointerdown starts a potential drag. If the pointer moves more
+// than a few pixels before release, it's a drag and no bark. If it doesn't
+// move, it's a click and we bark.
+const shibaWrap = document.getElementById('shibaWrap');
+let dragStartPt = null;
+shibaWrap.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  shibaWrap.setPointerCapture(e.pointerId);
+  dragStartPt = { x: e.screenX, y: e.screenY };
+  window.shiba.dragStart();
+  e.preventDefault();
+});
+shibaWrap.addEventListener('pointerup', (e) => {
+  if (!dragStartPt) return;
+  try { shibaWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+  const dx = e.screenX - dragStartPt.x;
+  const dy = e.screenY - dragStartPt.y;
+  const moved = (dx * dx + dy * dy) > 16; // >4px in any direction
+  dragStartPt = null;
+  window.shiba.dragEnd();
+  if (!moved) doBark();
+});
+shibaWrap.addEventListener('pointercancel', () => {
+  dragStartPt = null;
+  window.shiba.dragEnd();
+});
+
 window.shiba.onTriggerBark(() => doBark());
 </script>
 </body>
