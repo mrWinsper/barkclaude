@@ -26,17 +26,51 @@ function sendToClaude(message) {
   const text = `🐕 ${message}`;
 
   if (process.platform === 'win32') {
-    // Put text on clipboard, focus a likely terminal window, paste + Enter.
-    // Uses PowerShell -EncodedCommand so we don't have to escape anything.
+    // Find the terminal window that owns a running `claude` CLI process,
+    // activate it by PID, then paste + Enter. No title matching, no shotgun.
+    const textB64 = Buffer.from(text, 'utf8').toString('base64');
     const ps = `
-Add-Type -AssemblyName System.Windows.Forms | Out-Null
-[System.Windows.Forms.Clipboard]::SetText([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${Buffer.from(text, 'utf8').toString('base64')}')))
+$ErrorActionPreference = 'SilentlyContinue'
+$text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${textB64}'))
+
+$all = Get-CimInstance Win32_Process
+# Processes whose command line contains the claude CLI as a word
+# (\\bclaude\\b avoids matching "barkclaude")
+$claudePids = @($all | Where-Object {
+  $_.CommandLine -and $_.CommandLine -match '\\bclaude\\b'
+} | Select-Object -ExpandProperty ProcessId)
+
+if ($claudePids.Count -eq 0) { exit 0 }
+
+# Build map for fast parent lookup
+$byPid = @{}
+foreach ($p in $all) { $byPid[[int]$p.ProcessId] = $p }
+
+# Walk up the parent chain from each claude pid; collect ancestor PIDs
+$ancestors = @{}
+foreach ($cp in $claudePids) {
+  $cur = [int]$cp
+  while ($cur -and -not $ancestors.ContainsKey($cur)) {
+    $ancestors[$cur] = $true
+    $p = $byPid[$cur]
+    if (-not $p) { break }
+    $cur = [int]$p.ParentProcessId
+  }
+}
+
+# Find the first ancestor that owns a visible top-level window
+$target = Get-Process | Where-Object {
+  $_.MainWindowHandle -ne [IntPtr]::Zero -and $ancestors.ContainsKey([int]$_.Id)
+} | Select-Object -First 1
+
+if (-not $target) { exit 0 }
+
 $wshell = New-Object -ComObject wscript.shell
-$titles = @('Claude Code','Windows Terminal','PowerShell','Command Prompt','cmd','Terminal','WezTerm','Alacritty','Cursor','VSCode','Visual Studio Code')
-$activated = $false
-foreach ($t in $titles) { if ($wshell.AppActivate($t)) { $activated = $true; break } }
-if (-not $activated) { exit 0 }
+$null = $wshell.AppActivate([int]$target.Id)
 Start-Sleep -Milliseconds 200
+
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+[System.Windows.Forms.Clipboard]::SetText($text)
 [System.Windows.Forms.SendKeys]::SendWait('^v')
 Start-Sleep -Milliseconds 80
 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
