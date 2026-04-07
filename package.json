@@ -1,0 +1,18 @@
+{
+  "name": "barkclaude",
+  "version": "1.0.0",
+  "description": "An animated Shiba Inu that barks at Claude Code to make it work faster 🐕",
+  "main": "main.js",
+  "bin": {
+    "barkclaude": "./bin/barkclaude.js"
+  },
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": ["claude", "claude-code", "shiba", "doge", "productivity", "fun"],
+  "author": "Egor Kuptsov",
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^35.0.0"
+  }
+}

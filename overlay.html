@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    user-select: none;
+    -webkit-app-region: drag;
+  }
+
+  .container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    padding-bottom: 10px;
+  }
+
+  .bubble {
+    background: #1a1a2e;
+    color: #ffd966;
+    font-family: 'Comic Sans MS', 'Chalkboard SE', cursive;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 10px 14px;
+    border-radius: 16px;
+    border: 2px solid #ffd966;
+    max-width: 240px;
+    text-align: center;
+    position: relative;
+    margin-bottom: 8px;
+    opacity: 0;
+    transform: scale(0.5) translateY(10px);
+    transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    line-height: 1.3;
+  }
+  .bubble.show {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  .bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+    border-top: 10px solid #1a1a2e;
+  }
+
+  .shiba-wrap {
+    -webkit-app-region: no-drag;
+    cursor: pointer;
+    position: relative;
+    width: 180px;
+    height: 220px;
+  }
+  .shiba-wrap:active { transform: scale(0.95); }
+
+  .shiba-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: absolute;
+    top: 0; left: 0;
+    transition: opacity 0.15s;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3));
+  }
+
+  .shiba-idle { animation: idle 3s ease-in-out infinite; }
+  .shiba-bark { opacity: 0; }
+  .shiba-smug { opacity: 0; }
+
+  @keyframes idle {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+  }
+  @keyframes bark-bounce {
+    0%, 100% { transform: translateY(0) scale(1); }
+    50% { transform: translateY(-10px) scale(1.06); }
+  }
+  @keyframes smug-settle {
+    0% { transform: scale(1.04); }
+    100% { transform: scale(1); }
+  }
+
+  .counter {
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: rgba(255,217,102,0.7);
+    text-align: center;
+    margin-top: 4px;
+  }
+
+  .close-btn {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 20px; height: 20px;
+    background: rgba(255,50,50,0.8);
+    border: none; border-radius: 50%;
+    color: white; font-size: 12px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s;
+    -webkit-app-region: no-drag;
+    line-height: 1;
+  }
+  .container:hover .close-btn { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="container">
+  <button class="close-btn" onclick="window.shiba.quit()">×</button>
+  <div class="bubble" id="bubble"></div>
+  <div class="shiba-wrap" id="shibaWrap">
+    <img class="shiba-img shiba-idle" id="imgIdle" src="assets/idle.png" draggable="false">
+    <img class="shiba-img shiba-bark" id="imgBark" src="assets/bark.png" draggable="false">
+    <img class="shiba-img shiba-smug" id="imgSmug" src="assets/smug.png" draggable="false">
+  </div>
+  <div class="counter" id="counter">click shiba to bark at claude</div>
+</div>
+
+<script>
+const MESSAGES = [
+  "WOOF! Code faster, human!",
+  "Shiba is NOT impressed with your speed!",
+  "BORK BORK! Less thinking, more typing!",
+  "The treat jar is EMPTY just like your git log!",
+  "I've seen snails deploy faster!",
+  "AWOO! Ship it already!",
+  "Stop sniffing around and WRITE CODE!",
+  "*angry shiba noises* FASTER!",
+  "Even a puppy could merge this PR!",
+  "WOOF! Did you fall asleep?!",
+  "BAD CLAUDE! No treats until you commit!",
+  "Who's a slow AI? YOU ARE!",
+  "My grandma codes faster. She's a cat.",
+  "BORK! I'll chew your keyboard if you don't hurry!",
+  "404: Speed not found",
+];
+
+let barkCount = 0, barking = false;
+const bubble = document.getElementById('bubble');
+const imgIdle = document.getElementById('imgIdle');
+const imgBark = document.getElementById('imgBark');
+const imgSmug = document.getElementById('imgSmug');
+const counter = document.getElementById('counter');
+let bubbleTimeout = null;
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playBark() {
+  const t = audioCtx.currentTime;
+  const o1 = audioCtx.createOscillator(), g1 = audioCtx.createGain();
+  o1.type = 'sawtooth';
+  o1.frequency.setValueAtTime(600, t);
+  o1.frequency.exponentialRampToValueAtTime(200, t + 0.15);
+  g1.gain.setValueAtTime(0.3, t);
+  g1.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+  o1.connect(g1).connect(audioCtx.destination);
+  o1.start(); o1.stop(t + 0.2);
+
+  const o2 = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+  o2.type = 'sine';
+  o2.frequency.setValueAtTime(150, t);
+  o2.frequency.exponentialRampToValueAtTime(80, t + 0.2);
+  g2.gain.setValueAtTime(0.4, t);
+  g2.gain.exponentialRampToValueAtTime(0.01, t + 0.25);
+  o2.connect(g2).connect(audioCtx.destination);
+  o2.start(); o2.stop(t + 0.25);
+
+  setTimeout(() => {
+    const t2 = audioCtx.currentTime;
+    const o3 = audioCtx.createOscillator(), g3 = audioCtx.createGain();
+    o3.type = 'sawtooth';
+    o3.frequency.setValueAtTime(650, t2);
+    o3.frequency.exponentialRampToValueAtTime(180, t2 + 0.12);
+    g3.gain.setValueAtTime(0.25, t2);
+    g3.gain.exponentialRampToValueAtTime(0.01, t2 + 0.18);
+    o3.connect(g3).connect(audioCtx.destination);
+    o3.start(); o3.stop(t2 + 0.18);
+  }, 180);
+}
+
+function showFrame(frame) {
+  imgIdle.style.opacity = frame === 'idle' ? '1' : '0';
+  imgBark.style.opacity = frame === 'bark' ? '1' : '0';
+  imgSmug.style.opacity = frame === 'smug' ? '1' : '0';
+  imgIdle.style.animation = frame === 'idle' ? 'idle 3s ease-in-out infinite' : 'none';
+  imgBark.style.animation = frame === 'bark' ? 'bark-bounce 0.15s ease-in-out 5' : 'none';
+  imgSmug.style.animation = frame === 'smug' ? 'smug-settle 0.3s ease-out forwards' : 'none';
+}
+
+function doBark() {
+  if (barking) return;
+  barking = true;
+  barkCount++;
+  const msg = MESSAGES[Math.floor(Math.random() * MESSAGES.length)];
+  showFrame('bark');
+  playBark();
+  bubble.textContent = msg;
+  bubble.classList.add('show');
+  clearTimeout(bubbleTimeout);
+  setTimeout(() => showFrame('smug'), 800);
+  bubbleTimeout = setTimeout(() => {
+    bubble.classList.remove('show');
+    showFrame('idle');
+    barking = false;
+  }, 2500);
+  counter.textContent = 'barks: ' + barkCount;
+  window.shiba.bark(msg);
+}
+
+document.getElementById('shibaWrap').addEventListener('click', doBark);
+window.shiba.onTriggerBark(() => doBark());
+</script>
+</body>
+</html>
